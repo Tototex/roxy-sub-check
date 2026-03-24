@@ -2,10 +2,19 @@
 /**
  * Plugin Name: Roxy Subscription Check
  * Description: NFC-friendly membership verification page for WooCommerce Subscriptions. Per-subscription photo, scan log, and customer photo upload.
- * Version: 1.3.1
+ * Version: 1.3.2
  */
 
 if (!defined('ABSPATH')) exit;
+
+require_once __DIR__ . '/includes/class-roxy-sub-updater.php';
+
+\RoxySub\Updater::init([
+  'plugin_file' => plugin_basename(__FILE__),
+  'version'     => '1.3.2',
+  'github_repo' => 'Tototex/roxy-sub-check',
+  'slug'        => 'roxy-sub-check',
+]);
 
 class Roxy_Sub_Check {
   const META_PHOTO_ID = '_roxy_member_photo_id';
@@ -16,15 +25,12 @@ class Roxy_Sub_Check {
     add_filter('query_vars', [__CLASS__, 'query_vars']);
     add_action('template_redirect', [__CLASS__, 'template_redirect']);
 
-    // Admin: per-subscription member photo (WooCommerce Subscriptions)
     add_action('add_meta_boxes', [__CLASS__, 'add_subscription_photo_metabox']);
     add_action('save_post', [__CLASS__, 'save_subscription_photo_metabox'], 10, 2);
     add_action('admin_enqueue_scripts', [__CLASS__, 'admin_enqueue_media']);
 
-    // Admin: scan log viewer
     add_action('admin_menu', [__CLASS__, 'admin_menu']);
 
-    // Frontend: customer photo upload on "My Account > View Subscription"
     add_action('woocommerce_subscription_details_table', [__CLASS__, 'render_myaccount_photo_uploader'], 50);
     add_action('init', [__CLASS__, 'handle_myaccount_photo_upload']);
     add_action('wp_ajax_roxy_sub_check_lookup', [__CLASS__, 'ajax_lookup']);
@@ -65,7 +71,6 @@ class Roxy_Sub_Check {
   }
 
   public static function rewrite_rule() {
-    // Creates /member-check/ route
     add_rewrite_rule('^member-check/?$', 'index.php?roxy_member_check=1', 'top');
   }
 
@@ -155,16 +160,12 @@ class Roxy_Sub_Check {
 
   private static function render_page() {
     status_header(200);
-
-    // No-cache headers to avoid stale results on phones/browsers
     nocache_headers();
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
-
     header('Content-Type: text/html; charset=utf-8');
 
     $sub_id = isset($_GET['sub']) ? absint($_GET['sub']) : 0;
-    $payload = self::get_member_payload($sub_id, true);
     $result = self::check_subscription($sub_id);
 
     $is_active = ($result['active'] === true);
@@ -172,7 +173,6 @@ class Roxy_Sub_Check {
     $label = $is_active ? 'ACTIVE' : 'INACTIVE';
 
     echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">';
-    // Prevent indexing by search engines
     echo '<meta name="robots" content="noindex,nofollow">';
     echo '<title>Roxy Membership Check</title></head>';
     echo '<body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; margin:0; padding:16px;">';
@@ -192,7 +192,6 @@ class Roxy_Sub_Check {
       echo '<div style="font-size:18px; font-weight:700;">Unable to verify</div>';
       echo '<div style="opacity:.8; margin-top:6px;">' . esc_html($result['error']) . '</div>';
     } else {
-      // ACTIVE: show photo + name (name below photo)
       if ($is_active) {
         if (!empty($result['photo_url'])) {
           echo '<div style="text-align:center; margin-bottom:12px;">';
@@ -207,7 +206,6 @@ class Roxy_Sub_Check {
           echo '</div>';
         }
       } else {
-        // INACTIVE emphasis
         echo '<div style="font-size:20px; font-weight:900; color:#c22;">Membership not active</div>';
       }
 
@@ -216,7 +214,6 @@ class Roxy_Sub_Check {
         echo '<div style="margin-top:6px;">Membership quantity: <b>' . esc_html((string)$result['membership_qty']) . '</b></div>';
       }
 
-      // Hide status line when ACTIVE (banner already covers it)
       if (!$is_active && !empty($result['status'])) {
         echo '<div style="margin-top:10px;">Status: <b>' . esc_html($result['status']) . '</b></div>';
       }
@@ -280,28 +277,24 @@ class Roxy_Sub_Check {
     $out['name'] = trim($first . ' ' . $last);
     if (!$out['name']) $out['name'] = $user->display_name;
 
-    $status = $sub->get_status(); // active, on-hold, cancelled, expired, pending-cancel, etc.
+    $status = $sub->get_status();
     $out['status'] = $status;
 
-    // Door policy: allowed statuses
     $allowed = ['active', 'pending-cancel'];
     $out['active'] = in_array($status, $allowed, true);
 
     $out['membership_qty'] = self::subscription_quantity($sub);
 
-    // Member since (subscription start date)
     $start = $sub->get_date('start');
     if ($start) {
       $out['member_since'] = date_i18n(get_option('date_format'), strtotime($start));
     }
 
-    // Next payment
     $next = $sub->get_date('next_payment');
     if ($next) {
       $out['next_payment'] = date_i18n(get_option('date_format'), strtotime($next));
     }
 
-    // Photo per subscription (attachment id stored on the subscription post)
     $photo_id = absint(get_post_meta($sub_id, self::META_PHOTO_ID, true));
     if ($photo_id) {
       $img = wp_get_attachment_image_src($photo_id, 'medium');
@@ -313,16 +306,9 @@ class Roxy_Sub_Check {
     return $out;
   }
 
-  /* =========================
-   * Scan logging
-   * ========================= */
-
   private static function log_scan($sub_id, $user_id, $status, $is_active) {
     global $wpdb;
-
-    // Ensure table exists (covers edge cases where activation hook wasn't run)
     self::create_log_table();
-
     $table = self::table_name();
 
     $ip = '';
@@ -350,35 +336,28 @@ class Roxy_Sub_Check {
   }
 
   private static function get_last_visit($sub_id) {
-  global $wpdb;
-  $table = self::table_name();
+    global $wpdb;
+    $table = self::table_name();
 
-  // Get the SECOND most recent scan (skip current scan)
-  $dt = $wpdb->get_var(
-    $wpdb->prepare(
-      "SELECT scanned_at 
-       FROM {$table} 
-       WHERE subscription_id=%d 
-       ORDER BY scanned_at DESC 
-       LIMIT 1 OFFSET 1",
-      (int)$sub_id
-    )
-  );
+    $dt = $wpdb->get_var(
+      $wpdb->prepare(
+        "SELECT scanned_at 
+         FROM {$table} 
+         WHERE subscription_id=%d 
+         ORDER BY scanned_at DESC 
+         LIMIT 1 OFFSET 1",
+        (int)$sub_id
+      )
+    );
 
-  if (!$dt) return '';
+    if (!$dt) return '';
 
-  $fmt_date = get_option('date_format');
-  $fmt_time = get_option('time_format');
-  return date_i18n($fmt_date . ' ' . $fmt_time, strtotime($dt));
-}
-
-
-  /* =========================
-   * Admin UI: Scan Logs
-   * ========================= */
+    $fmt_date = get_option('date_format');
+    $fmt_time = get_option('time_format');
+    return date_i18n($fmt_date . ' ' . $fmt_time, strtotime($dt));
+  }
 
   public static function admin_menu() {
-    // Put it under WooCommerce menu if available, else under Tools
     if (function_exists('WC')) {
       add_submenu_page(
         'woocommerce',
@@ -413,7 +392,6 @@ class Roxy_Sub_Check {
 
     $filter_sub = isset($_GET['sub']) ? absint($_GET['sub']) : 0;
 
-    // CSV export
     if (isset($_GET['roxy_export']) && $_GET['roxy_export'] === 'csv') {
       self::export_scan_log_csv($filter_sub);
       exit;
@@ -448,9 +426,6 @@ class Roxy_Sub_Check {
 
     echo '<form method="get" style="margin:12px 0;">';
     echo '<input type="hidden" name="page" value="roxy-scan-log">';
-    if (!function_exists('WC')) {
-      // Tools page uses different base file but "page" still works; safe to keep.
-    }
     echo '<label>Filter by Subscription ID: </label> ';
     echo '<input type="number" name="sub" value="' . esc_attr($filter_sub ?: '') . '" style="width:160px;"> ';
     echo '<button class="button">Filter</button> ';
@@ -486,7 +461,6 @@ class Roxy_Sub_Check {
 
     echo '</tbody></table>';
 
-    // Pagination
     $total_pages = (int)ceil($total / $per_page);
     if ($total_pages > 1) {
       echo '<div style="margin-top:12px;">';
@@ -540,10 +514,6 @@ class Roxy_Sub_Check {
 
     fclose($out);
   }
-
-  /* =========================
-   * Customer: Photo upload in My Account
-   * ========================= */
 
   public static function render_myaccount_photo_uploader($subscription) {
     if (!is_user_logged_in()) return;
@@ -605,42 +575,31 @@ class Roxy_Sub_Check {
     $sub = wcs_get_subscription($sub_id);
     if (!$sub) return;
 
-    // Confirm current user owns this subscription
     $owner = (int)$sub->get_user_id();
     if ($owner !== (int)get_current_user_id()) return;
 
     if (empty($_FILES['roxy_member_photo']) || empty($_FILES['roxy_member_photo']['name'])) return;
 
-    // Media handling requires these
     require_once ABSPATH . 'wp-admin/includes/file.php';
     require_once ABSPATH . 'wp-admin/includes/media.php';
     require_once ABSPATH . 'wp-admin/includes/image.php';
 
-    // Upload & attach to the subscription post
     $attachment_id = media_handle_upload('roxy_member_photo', $sub_id);
 
     if (is_wp_error($attachment_id)) {
-      // Optional: surface error on account page later if you want.
       return;
     }
 
     update_post_meta($sub_id, self::META_PHOTO_ID, (int)$attachment_id);
 
-    // Redirect to avoid re-post on refresh
     wp_safe_redirect(wp_get_referer() ?: wc_get_account_endpoint_url('subscriptions'));
     exit;
   }
-
-  /* =========================
-   * Admin UI: Photo Metabox
-   * ========================= */
 
   public static function admin_enqueue_media($hook) {
     if (!is_admin()) return;
     $screen = function_exists('get_current_screen') ? get_current_screen() : null;
     if (!$screen) return;
-
-    // WooCommerce Subscriptions post type is usually 'shop_subscription'
     if ($screen->post_type !== 'shop_subscription') return;
 
     wp_enqueue_media();
@@ -743,6 +702,4 @@ class Roxy_Sub_Check {
 }
 
 Roxy_Sub_Check::init();
-
-// Activation hook: create log table
 register_activation_hook(__FILE__, ['Roxy_Sub_Check', 'activate']);
