@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Roxy Subscription Check
  * Description: NFC-friendly membership verification page for WooCommerce Subscriptions. Per-subscription photo, scan log, and customer photo upload.
- * Version: 1.3.2
+ * Version: 1.3.3
  * Author: Newport Roxy (AI Team)
  * Update URI: https://github.com/Tototex/roxy-sub-check
  */
@@ -13,7 +13,7 @@ require_once __DIR__ . '/includes/class-roxy-sub-updater.php';
 
 \RoxySub\Updater::init([
   'plugin_file' => plugin_basename(__FILE__),
-  'version'     => '1.3.2',
+  'version'     => '1.3.3',
   'github_repo' => 'Tototex/roxy-sub-check',
   'slug'        => 'roxy-sub-check',
 ]);
