@@ -90,7 +90,13 @@ class Roxy_Sub_Check {
       if (!defined('DONOTCACHEPAGE')) {
         define('DONOTCACHEPAGE', true);
       }
-      auth_redirect();
+      nocache_headers();
+      if (!is_user_logged_in()) {
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? wp_unslash($_SERVER['REQUEST_URI']) : '/member-check/';
+        $redirect_back = home_url($request_uri);
+        wp_safe_redirect(wp_login_url($redirect_back));
+        exit;
+      }
       if (!self::can_access_member_check()) {
         wp_die('You do not have permission to access Member Check.');
       }
