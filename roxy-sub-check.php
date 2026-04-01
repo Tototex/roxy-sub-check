@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Roxy Subscription Check
  * Description: NFC-friendly membership verification page for WooCommerce Subscriptions. Per-subscription photo, scan log, and customer photo upload.
- * Version: 1.3.5
+ * Version: 1.3.6
  * Author: Newport Roxy (AI Team)
  * Update URI: https://github.com/Tototex/roxy-sub-check
  */
@@ -13,7 +13,7 @@ require_once __DIR__ . '/includes/class-roxy-sub-updater.php';
 
 \RoxySub\Updater::init([
   'plugin_file' => plugin_basename(__FILE__),
-  'version'     => '1.3.5',
+  'version'     => '1.3.6',
   'github_repo' => 'Tototex/roxy-sub-check',
   'slug'        => 'roxy-sub-check',
 ]);
@@ -87,11 +87,10 @@ class Roxy_Sub_Check {
 
   public static function template_redirect() {
     if (get_query_var('roxy_member_check') == 1) {
-      if (!is_user_logged_in()) {
-        $redirect_back = home_url('/member-check/') . (isset($_GET['sub']) ? '?sub=' . absint($_GET['sub']) : '');
-        wp_redirect(wp_login_url($redirect_back));
-        exit;
+      if (!defined('DONOTCACHEPAGE')) {
+        define('DONOTCACHEPAGE', true);
       }
+      auth_redirect();
       if (!self::can_access_member_check()) {
         wp_die('You do not have permission to access Member Check.');
       }
@@ -162,7 +161,8 @@ class Roxy_Sub_Check {
   }
 
   public static function ajax_lookup() {
-    if (!current_user_can('edit_posts')) {
+    check_ajax_referer('roxy_sub_check_lookup', 'nonce');
+    if (!self::can_access_member_check()) {
       wp_send_json_error(['message' => 'Permission denied.'], 403);
     }
     $sub_id = isset($_POST['sub_id']) ? absint($_POST['sub_id']) : 0;
